@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { arrivalClockForDisplay, countUnverified, filterFlights, todayInToronto, type DashboardPayload, type Flight } from "@/lib/flights";
+import { arrivalClockForDisplay, filterFlights, groupArrivalRows, todayInToronto, type DashboardPayload, type Flight, type FlightGroup } from "@/lib/flights";
 
 type ApiResponse = DashboardPayload | { error: string; providerCode?: string; flightDate?: string };
 const dateLabel = (date: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date(`${date}T12:00:00Z`));
@@ -45,15 +45,17 @@ export default function Dashboard() {
   useEffect(() => { setFlightDate(todayInToronto()); void load(); }, [load]);
 
   const flights = payload?.flights ?? EMPTY_FLIGHTS;
-  const verified = useMemo(() => filterFlights(flights, excludeUs), [flights, excludeUs]);
-  const terminalOne = flights.filter((flight) => flight.isYyz === true && flight.isTerminal1 === true);
-  const unverifiedCount = countUnverified(flights);
-  const countryCount = new Set(verified.map((flight) => flight.originCountryCode ?? flight.originCountry).filter(Boolean)).size;
+  const verified = useMemo(() => groupArrivalRows(filterFlights(flights, excludeUs)), [flights, excludeUs]);
+  const terminalOne = groupArrivalRows(flights.filter((flight) => flight.isYyz === true && flight.isTerminal1 === true));
+  const unverifiedCount = groupArrivalRows(flights.filter((flight) => flight.isYyz !== false && (flight.isYyz === null || flight.isInternational === null || flight.isTerminal1 === null))).length;
+  const countryCount = new Set(verified.map((group) => group.representative.originCountryCode ?? group.representative.originCountry).filter(Boolean)).size;
   const statuses = Array.from(new Set(flights.map((flight) => flight.status).filter((status): status is string => Boolean(status)))).sort();
-  const visible = (showUnverified ? flights.filter((flight) => flight.isYyz !== false && (flight.isYyz === null || flight.isInternational === null || flight.isTerminal1 === null)) : verified)
-    .filter((flight) => !excludeUs || (showUnverified ? flight.isUsOrigin === false : flight.isUsOrigin !== true))
-    .filter((flight) => statusFilter === "all" || flight.status === statusFilter)
-    .filter((flight) => `${flight.airline ?? ""} ${flight.flightNumber ?? ""} ${flight.originAirport ?? ""} ${flight.originCode ?? ""} ${flight.originCountry ?? ""}`.toLowerCase().includes(query.toLowerCase()));
+  const visible = (showUnverified
+    ? groupArrivalRows(flights.filter((flight) => flight.isYyz !== false && (flight.isYyz === null || flight.isInternational === null || flight.isTerminal1 === null)))
+    : verified)
+    .filter((group) => !excludeUs || (showUnverified ? group.flights.every((flight) => flight.isUsOrigin === false) : group.flights.every((flight) => flight.isUsOrigin !== true)))
+    .filter((group) => statusFilter === "all" || group.statuses.includes(statusFilter))
+    .filter((group) => `${group.airlines.join(" ")} ${group.flightNumbers.join(" ")} ${group.representative.originAirport ?? ""} ${group.representative.originCode ?? ""} ${group.representative.originCountry ?? ""}`.toLowerCase().includes(query.toLowerCase()));
 
   return <main className="shell">
     <div className="topline"><div className="brand"><div className="brand-mark"><PlaneIcon /></div><span>PEARSON <b>FLIGHT INTELLIGENCE</b></span></div><span className="live-label"><i /> LIVE ARRIVALS</span></div>
@@ -76,18 +78,18 @@ export default function Dashboard() {
       <Metric icon={<AlertIcon />} label="Needs verification" value={loading ? "—" : String(unverifiedCount)} detail="Origin country, terminal, or destination unavailable" color="amber" />
     </section>
 
-    <section className="notice"><div className="notice-symbol"><InfoIcon /></div><p><strong>Live feed and plan coverage</strong><span>Free accounts include unfiltered real-time data (100 requests/month). YYZ route filtering may require a paid plan. Responses are cached for five minutes; this dashboard does not auto-poll.</span></p><button onClick={() => setShowUnverified(!showUnverified)}>{showUnverified ? "View confirmed arrivals" : "Review unverified arrivals"}<ArrowIcon /></button></section>
+    <section className="notice"><div className="notice-symbol"><InfoIcon /></div><p><strong>Live feed and plan coverage</strong><span>Free accounts include real-time data (100 requests/month). A refresh can use up to six API requests; results are cached for five minutes and the dashboard does not auto-poll.</span></p><button onClick={() => setShowUnverified(!showUnverified)}>{showUnverified ? "View confirmed arrivals" : "Review unverified arrivals"}<ArrowIcon /></button></section>
 
     {error && <div className="error-banner" role="alert"><AlertIcon /><div><strong>Flight data unavailable</strong><span>{error}</span></div><button onClick={() => void load()}>Try again</button></div>}
 
     <section className="table-card">
       <div className="table-heading"><div><div className="eyebrow">TODAY’S LIVE FLIGHT BOARD</div><h2>{showUnverified ? "Arrivals needing verification" : "Terminal 1 international arrivals"}</h2><p>{showUnverified ? "Potential YYZ arrivals with an unknown origin country or terminal assignment." : "Live flight statuses · Toronto local time · Sorted by scheduled arrival"}</p></div><div className="table-meta"><span className={`source-pill ${payload?.source === "live" ? "source-live" : ""}`}><i />{payload?.source === "live" ? "Fresh data" : payload ? "Cached data" : "Awaiting data"}</span><span>{payload ? `Updated ${freshnessLabel(payload.fetchedAt)} ET` : "—"}</span></div></div>
-      <div className="filters"><label className="search"><SearchIcon /><input aria-label="Search flights" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search airline, flight or origin" /></label><label className="check"><input type="checkbox" checked={excludeUs} onChange={(e) => setExcludeUs(e.target.checked)} /><span className="checkmark" />Exclude US origins</label>{statuses.length > 0 && <label className="status-filter">Status<select aria-label="Filter by status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="all">All statuses</option>{statuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></label>}<span className="results-count">{loading ? "Loading flights…" : `${visible.length} ${visible.length === 1 ? "flight" : "flights"}`}</span></div>
+      <div className="filters"><label className="search"><SearchIcon /><input aria-label="Search flights" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search airline, flight or origin" /></label><label className="check"><input type="checkbox" checked={excludeUs} onChange={(e) => setExcludeUs(e.target.checked)} /><span className="checkmark" />Exclude US origins</label>{statuses.length > 0 && <label className="status-filter">Status<select aria-label="Filter by status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="all">All statuses</option>{statuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></label>}<span className="results-count">{loading ? "Loading arrivals…" : `${visible.length} ${visible.length === 1 ? "arrival" : "arrivals"}`}</span></div>
 
       <div className="table-scroll"><table><thead><tr><th>ARRIVAL · TORONTO</th><th>FLIGHT</th><th>AIRLINE</th><th>ORIGIN</th><th>TERMINAL</th><th>STATUS</th></tr></thead><tbody>
-        {loading ? <tr><td colSpan={6} className="state-cell"><div className="spinner" /><strong>Loading today&apos;s live arrivals</strong><span>Connecting securely to Aviationstack…</span></td></tr> : !error && visible.length === 0 ? <tr><td colSpan={6} className="state-cell"><div className="empty-icon"><PlaneIcon /></div><strong>{showUnverified ? "No arrivals need verification" : query || statusFilter !== "all" ? "No flights match these filters" : "No confirmed arrivals to display"}</strong><span>{showUnverified ? "No potential arrivals with unknown origin or terminal data were returned." : "The provider may have no matching arrivals, or required origin data may not be available."}</span></td></tr> : visible.map((flight) => <FlightRow key={flight.id} flight={flight} unverified={showUnverified} />)}
+        {loading ? <tr><td colSpan={6} className="state-cell"><div className="spinner" /><strong>Loading today&apos;s live arrivals</strong><span>Connecting securely to Aviationstack…</span></td></tr> : !error && visible.length === 0 ? <tr><td colSpan={6} className="state-cell"><div className="empty-icon"><PlaneIcon /></div><strong>{showUnverified ? "No arrivals need verification" : query || statusFilter !== "all" ? "No flights match these filters" : "No confirmed arrivals to display"}</strong><span>{showUnverified ? "No potential arrivals with unknown origin or terminal data were returned." : "The provider may have no matching arrivals, or required origin data may not be available."}</span></td></tr> : visible.map((group) => <FlightRow key={group.id} group={group} unverified={showUnverified} />)}
       </tbody></table></div>
-      {payload?.truncated && <div className="truncated-note"><AlertIcon />Results reached the safe 300-record pagination limit. Some arrivals may not be shown.</div>}
+      {payload?.truncated && <div className="truncated-note"><AlertIcon />Scanned {payload.scannedRecords.toLocaleString()} of {payload.providerTotal === null ? "an unknown number of" : payload.providerTotal.toLocaleString()} provider records. Some arrivals may not be shown.</div>}
       <div className="table-footer"><span><span className="legend-dot" /> Scheduled <span className="legend-separator">·</span> Estimated / actual shown when supplied</span><span>Live data: Aviationstack · Origin: OurAirports</span></div>
     </section>
     <footer><span>For planning use. Flight schedules and terminal assignments can change.</span><span>All times shown in Toronto local time (ET)</span></footer>
@@ -98,9 +100,10 @@ function Metric({ icon, label, value, detail, color }: { icon: React.ReactNode; 
   return <article className={`metric metric-${color}`}><div className="metric-top"><span>{label}</span><span className="metric-icon">{icon}</span></div><strong>{value}</strong><p>{detail}</p></article>;
 }
 
-function FlightRow({ flight, unverified }: { flight: Flight; unverified: boolean }) {
+function FlightRow({ group, unverified }: { group: FlightGroup; unverified: boolean }) {
+  const flight = group.representative;
   const terminalLabel = flight.isTerminal1 === true ? "T1" : flight.terminal ?? "Unknown";
-  return <tr><td><strong className="arrival-time">{timeLabel(flight.scheduledArrival)}</strong>{flight.estimatedArrival && <span className="time-sub">Est. {timeLabel(flight.estimatedArrival)}</span>}{flight.actualArrival && <span className="time-sub actual-time">Actual {timeLabel(flight.actualArrival)}</span>}</td><td><strong className="flight-number">{flight.flightNumber ?? "Unknown"}</strong></td><td>{flight.airline ?? "Not provided"}</td><td><strong>{flight.originCode ?? "Unknown"}</strong><span className="origin-sub">{flight.originCity ?? flight.originAirport ?? "Airport name unavailable"}{flight.originCountry ? `, ${flight.originCountry}` : unverified ? ", country unverified" : ""}</span></td><td><span className={`terminal-tag ${flight.isTerminal1 === null ? "terminal-unknown" : ""}`}>{terminalLabel}</span></td><td>{flight.status ? <span className="status-tag">{flight.status}</span> : <span className="status-unknown">Not provided</span>}</td></tr>;
+  return <tr><td><strong className="arrival-time">{timeLabel(flight.scheduledArrival)}</strong>{flight.estimatedArrival && <span className="time-sub">Est. {timeLabel(flight.estimatedArrival)}</span>}{flight.actualArrival && <span className="time-sub actual-time">Actual {timeLabel(flight.actualArrival)}</span>}</td><td><strong className="flight-number grouped-values">{group.flightNumbers.length ? group.flightNumbers.join(" · ") : "Unknown"}</strong></td><td className="grouped-values">{group.airlines.length ? group.airlines.join(" · ") : "Not provided"}</td><td><strong>{flight.originCode ?? "Unknown"}</strong><span className="origin-sub">{flight.originCity ?? flight.originAirport ?? "Airport name unavailable"}{flight.originCountry ? `, ${flight.originCountry}` : unverified ? ", country unverified" : ""}</span></td><td><span className={`terminal-tag ${flight.isTerminal1 === null ? "terminal-unknown" : ""}`}>{terminalLabel}</span></td><td>{group.statuses.length ? <span className="status-tag">{group.statuses.join(" / ")}</span> : <span className="status-unknown">Not provided</span>}</td></tr>;
 }
 
 function PlaneIcon() { return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m2.5 12 19-8-6.2 18-3.1-7.8L2.5 12Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/><path d="m12.2 14.2 5.1-5.1" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>; }

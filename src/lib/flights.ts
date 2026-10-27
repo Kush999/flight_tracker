@@ -20,12 +20,23 @@ export type Flight = {
   isUsOrigin: boolean | null;
 };
 
+export type FlightGroup = {
+  id: string;
+  representative: Flight;
+  flights: Flight[];
+  flightNumbers: string[];
+  airlines: string[];
+  statuses: string[];
+};
+
 export type DashboardPayload = {
   flightDate: string;
   fetchedAt: string;
   flights: Flight[];
   source: "live" | "cache";
   truncated: boolean;
+  providerTotal: number | null;
+  scannedRecords: number;
 };
 
 export type AirportReference = { name: string | null; city: string | null; countryCode: string };
@@ -121,6 +132,34 @@ export function filterFlights(flights: Flight[], excludeUs: boolean): Flight[] {
       if (Number.isNaN(bTime)) return -1;
       return aTime - bTime;
     });
+}
+
+/** Combines provider codeshare rows for one origin, scheduled minute, and terminal. */
+export function groupArrivalRows(flights: Flight[]): FlightGroup[] {
+  const groups = new Map<string, Flight[]>();
+  for (const flight of flights) {
+    const clock = arrivalClockForDisplay(flight.scheduledArrival);
+    const date = arrivalDateInToronto(flight.scheduledArrival);
+    const canGroup = Boolean(flight.originCode && date && clock && flight.flightNumber);
+    const key = canGroup
+      ? [flight.originCode!.toUpperCase(), date, clock, flight.terminal?.toUpperCase() ?? "UNKNOWN"].join("|")
+      : `single|${flight.id}`;
+    groups.set(key, [...(groups.get(key) ?? []), flight]);
+  }
+  return Array.from(groups, ([key, rows]) => ({
+    id: key.startsWith("single|") ? rows[0].id : key,
+    representative: rows[0],
+    flights: rows,
+    flightNumbers: Array.from(new Set(rows.map((flight) => flight.flightNumber).filter((value): value is string => Boolean(value)))),
+    airlines: Array.from(new Set(rows.map((flight) => flight.airline).filter((value): value is string => Boolean(value)))),
+    statuses: Array.from(new Set(rows.map((flight) => flight.status).filter((value): value is string => Boolean(value)))),
+  })).sort((a, b) => {
+    const aTime = a.representative.scheduledArrival ? Date.parse(a.representative.scheduledArrival) : Number.NaN;
+    const bTime = b.representative.scheduledArrival ? Date.parse(b.representative.scheduledArrival) : Number.NaN;
+    if (Number.isNaN(aTime)) return Number.isNaN(bTime) ? 0 : 1;
+    if (Number.isNaN(bTime)) return -1;
+    return aTime - bTime;
+  });
 }
 
 export function countUnverified(flights: Flight[]): number {

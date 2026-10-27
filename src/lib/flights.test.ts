@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { arrivalClockForDisplay, arrivalDateInToronto, countUnverified, filterFlights, normalizeFlights, todayInToronto } from "@/lib/flights";
+import { arrivalClockForDisplay, arrivalDateInToronto, countUnverified, filterFlights, groupArrivalRows, normalizeFlights, todayInToronto } from "@/lib/flights";
 import { providerErrorFor } from "@/lib/aviationstack";
 
 describe("todayInToronto", () => {
@@ -60,6 +60,20 @@ describe("normalizeFlights and filters", () => {
     const rows = normalizeFlights({ data: [flight(), flight({ departure: { iata: "JFK", countryCode: "US" } })] });
     expect(filterFlights(rows, false)).toHaveLength(2);
     expect(filterFlights(rows, true).map((row) => row.originCode)).toEqual(["LHR"]);
+  });
+  it("groups same-origin, same-minute codeshare listings while retaining every flight number and airline", () => {
+    const codeshares = [
+      ["AC887", "Air Canada"], ["UA8405", "United Airlines"], ["SN9657", "Brussels Airlines"],
+      ["OS8247", "Austrian Airlines"], ["LX4630", "Swiss"], ["LH6511", "Lufthansa"],
+    ].map(([number, name]) => flight({
+      departure: { iata: "VIE", countryCode: "AT", countryName: "Austria", airport: "Vienna", city: "Vienna" },
+      arrival: { iata: "YYZ", scheduled: "2026-10-27T14:45:00+00:00", terminal: "1" },
+      airline: { name }, flight: { iata: number },
+    }));
+    const groups = groupArrivalRows(normalizeFlights({ data: codeshares }));
+    expect(groups).toHaveLength(1);
+    expect(groups[0].flightNumbers).toEqual(["AC887", "UA8405", "SN9657", "OS8247", "LX4630", "LH6511"]);
+    expect(groups[0].airlines).toEqual(["Air Canada", "United Airlines", "Brussels Airlines", "Austrian Airlines", "Swiss", "Lufthansa"]);
   });
   it("uses airport-code reference data when the provider omits origin country", () => {
     const rows = normalizeFlights({ data: [flight({ departure: { iata: "NRT" } })] }, (iata) => iata === "NRT" ? { name: "Narita International Airport", city: "Narita", countryCode: "JP" } : null, (code) => code === "JP" ? "Japan" : null);

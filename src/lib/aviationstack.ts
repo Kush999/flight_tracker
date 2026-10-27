@@ -3,11 +3,11 @@ import { countryNameForCode, resolveAirport } from "@/lib/airport-reference.serv
 
 const BASE_URL = "https://api.aviationstack.com/v1/flights";
 const PAGE_SIZE = 100;
-const MAX_PAGES = 3;
+const MAX_PAGES = 6;
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const REQUEST_GAP_MS = 10_000;
-type CacheEntry = { data: Flight[]; expires: number; fetchedAt: string; truncated: boolean };
-type FlightResult = { flights: Flight[]; fetchedAt: string; source: "live" | "cache"; truncated: boolean };
+const REQUEST_GAP_MS = 1_000;
+type CacheEntry = { data: Flight[]; expires: number; fetchedAt: string; truncated: boolean; providerTotal: number | null; scannedRecords: number };
+type FlightResult = { flights: Flight[]; fetchedAt: string; source: "live" | "cache"; truncated: boolean; providerTotal: number | null; scannedRecords: number };
 const cache = new Map<string, CacheEntry>();
 const lastRequest = new Map<string, number>();
 const requestQueue = new Map<string, Promise<void>>();
@@ -52,7 +52,7 @@ async function requestPage(key: string, offset: number): Promise<unknown> {
   url.searchParams.set("offset", String(offset));
   let response: Response;
   try {
-    response = await fetch(url, { signal: AbortSignal.timeout(15_000), cache: "no-store" });
+    response = await fetch(url, { signal: AbortSignal.timeout(7_000), cache: "no-store" });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") throw new ProviderError("timeout", "Aviationstack took too long to respond. Try refreshing in a moment.");
     throw new ProviderError("unavailable", "Aviationstack could not be reached. Check your connection and try again.");
@@ -72,7 +72,7 @@ export async function getFlights(flightDate: string, refresh = false): Promise<F
   if (!key) throw new ProviderError("auth", "Setup required: add AVIATIONSTACK_ACCESS_KEY to the server environment.");
   const cacheKey = `${key}:${flightDate}`;
   const cached = cache.get(cacheKey);
-  if (!refresh && cached && cached.expires > Date.now()) return { flights: cached.data, fetchedAt: cached.fetchedAt, truncated: cached.truncated, source: "cache" };
+  if (!refresh && cached && cached.expires > Date.now()) return { flights: cached.data, fetchedAt: cached.fetchedAt, truncated: cached.truncated, providerTotal: cached.providerTotal, scannedRecords: cached.scannedRecords, source: "cache" };
   const pending = inFlight.get(cacheKey);
   if (pending) return { ...(await pending), source: "cache" };
 
@@ -88,10 +88,20 @@ export async function getFlights(flightDate: string, refresh = false): Promise<F
 async function fetchAndCache(key: string, cacheKey: string, flightDate: string): Promise<FlightResult> {
   const all: Flight[] = [];
   let providerRows = 0;
+  let providerTotal: number | null = null;
   let truncated = false;
   let offset = 0;
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const body = await requestPage(key, offset);
+    let body: unknown;
+    try {
+      body = await requestPage(key, offset);
+    } catch (error) {
+      if (providerRows > 0 && error instanceof ProviderError && (error.kind === "timeout" || error.kind === "unavailable")) {
+        truncated = true;
+        break;
+      }
+      throw error;
+    }
     let pageFlights: Flight[];
     try { pageFlights = normalizeFlights(body, resolveAirport, countryNameForCode); } catch { throw new ProviderError("invalid", "Aviationstack returned flight data in an unexpected format."); }
     providerRows += pageFlights.length;
@@ -99,6 +109,7 @@ async function fetchAndCache(key: string, cacheKey: string, flightDate: string):
     // the arrival's calendar date in Toronto for overnight or date-line routes.
     all.push(...pageFlights.filter((flight) => arrivalDateInToronto(flight.scheduledArrival) === flightDate));
     const pagination = (body as { pagination?: { count?: number; total?: number; limit?: number; offset?: number } }).pagination;
+    if (typeof pagination?.total === "number") providerTotal = pagination.total;
     if (!pagination || pagination.total === undefined) {
       if (pageFlights.length < PAGE_SIZE) break;
       if (page === MAX_PAGES - 1) truncated = true;
@@ -110,7 +121,7 @@ async function fetchAndCache(key: string, cacheKey: string, flightDate: string):
     offset = (pagination.offset ?? offset) + (pagination.count ?? pageFlights.length);
   }
   const fetchedAt = new Date().toISOString();
-  const entry: CacheEntry = { data: all, expires: Date.now() + CACHE_TTL_MS, fetchedAt, truncated };
+  const entry: CacheEntry = { data: all, expires: Date.now() + CACHE_TTL_MS, fetchedAt, truncated, providerTotal, scannedRecords: providerRows };
   cache.set(cacheKey, entry);
-  return { flights: all, fetchedAt, source: "live", truncated };
+  return { flights: all, fetchedAt, source: "live", truncated, providerTotal, scannedRecords: providerRows };
 }
