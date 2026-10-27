@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { arrivalClockForDisplay, filterFlights, groupArrivalRows, todayInToronto, type DashboardPayload, type Flight, type FlightGroup } from "@/lib/flights";
+import { buildArrivalWaves } from "@/lib/arrival-waves";
 
 type ApiResponse = DashboardPayload | { error: string; providerCode?: string; flightDate?: string };
 const dateLabel = (date: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date(`${date}T12:00:00Z`));
@@ -23,6 +24,7 @@ export default function Dashboard() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [showUnverified, setShowUnverified] = useState(false);
+  const [now, setNow] = useState<Date | null>(null);
 
   const load = useCallback(async (refresh = false) => {
     if (refresh) setRefreshing(true);
@@ -43,6 +45,12 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => { setFlightDate(todayInToronto()); void load(); }, [load]);
+  useEffect(() => {
+    const updateClock = () => setNow(new Date());
+    updateClock();
+    const timer = window.setInterval(updateClock, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const flights = payload?.flights ?? EMPTY_FLIGHTS;
   const verified = useMemo(() => groupArrivalRows(filterFlights(flights, excludeUs)), [flights, excludeUs]);
@@ -50,6 +58,15 @@ export default function Dashboard() {
   const unverifiedCount = groupArrivalRows(flights.filter((flight) => flight.isYyz !== false && (flight.isYyz === null || flight.isInternational === null || flight.isTerminal1 === null))).length;
   const countryCount = new Set(verified.map((group) => group.representative.originCountryCode ?? group.representative.originCountry).filter(Boolean)).size;
   const statuses = Array.from(new Set(flights.map((flight) => flight.status).filter((status): status is string => Boolean(status)))).sort();
+  const arrivalWaves = useMemo(() => now ? buildArrivalWaves(verified, now) : [], [verified, now]);
+  const highlightedWaves = useMemo(() => {
+    const peaks = arrivalWaves.filter((wave) => wave.isPeak);
+    const others = arrivalWaves.filter((wave) => !wave.isPeak)
+      .sort((a, b) => b.arrivals.length - a.arrivals.length || a.startMinute - b.startMinute)
+      .slice(0, Math.max(0, 6 - peaks.length));
+    return [...peaks, ...others].sort((a, b) => a.startMinute - b.startMinute);
+  }, [arrivalWaves]);
+  const peakWaveCount = Math.max(0, ...arrivalWaves.map((wave) => wave.arrivals.length));
   const visible = (showUnverified
     ? groupArrivalRows(flights.filter((flight) => flight.isYyz !== false && (flight.isYyz === null || flight.isInternational === null || flight.isTerminal1 === null)))
     : verified)
@@ -81,6 +98,24 @@ export default function Dashboard() {
     <section className="notice"><div className="notice-symbol"><InfoIcon /></div><p><strong>Live feed and plan coverage</strong><span>Free accounts include real-time data (100 requests/month). A refresh can use up to six API requests; results are cached for five minutes and the dashboard does not auto-poll.</span></p><button onClick={() => setShowUnverified(!showUnverified)}>{showUnverified ? "View confirmed arrivals" : "Review unverified arrivals"}<ArrowIcon /></button></section>
 
     {error && <div className="error-banner" role="alert"><AlertIcon /><div><strong>Flight data unavailable</strong><span>{error}</span></div><button onClick={() => void load()}>Try again</button></div>}
+
+    <section className="waves-panel" aria-labelledby="arrival-waves-title">
+      <div className="waves-heading">
+        <div><div className="eyebrow">ARRIVAL WAVES · TORONTO LOCAL TIME</div><h2 id="arrival-waves-title">Upcoming peak periods</h2><p>Confirmed Terminal 1 international arrivals grouped into 30-minute windows.</p></div>
+        {!loading && <span className="waves-total">{arrivalWaves.length} upcoming {arrivalWaves.length === 1 ? "window" : "windows"}</span>}
+      </div>
+      {loading ? <div className="waves-empty">Loading upcoming arrival periods…</div> : error && !payload ? <div className="waves-empty">Arrival waves are unavailable until flight data loads.</div> : highlightedWaves.length === 0 ? <div className="waves-empty">No upcoming confirmed arrivals with scheduled times.</div> : <div className="waves-list">
+        {highlightedWaves.map((wave) => <article className={`wave-card${wave.isPeak ? " wave-card-peak" : ""}`} key={wave.startMinute}>
+          <div className="wave-card-heading"><strong>{wave.label}</strong>{wave.isPeak && <span className="peak-badge">BUSIEST</span>}<span className="wave-count">{wave.arrivals.length} {wave.arrivals.length === 1 ? "arrival" : "arrivals"}</span></div>
+          <div className="wave-bar"><span style={{ width: `${Math.max(12, (wave.arrivals.length / peakWaveCount) * 100)}%` }} /></div>
+          <ul className="wave-contributors">{wave.arrivals.map((group) => <li key={group.id}>
+            <strong>{group.flightNumbers.length ? group.flightNumbers.join(" / ") : "Flight number unavailable"}</strong>
+            <span>{group.representative.originCity ?? group.representative.originAirport ?? group.representative.originCode ?? "Origin unavailable"}{group.representative.originCode ? ` (${group.representative.originCode})` : ""}</span>
+          </li>)}</ul>
+        </article>)}
+      </div>}
+      {!loading && arrivalWaves.length > highlightedWaves.length && <p className="waves-footnote">Showing the 6 busiest upcoming windows of {arrivalWaves.length}.</p>}
+    </section>
 
     <section className="table-card">
       <div className="table-heading"><div><div className="eyebrow">TODAY’S LIVE FLIGHT BOARD</div><h2>{showUnverified ? "Arrivals needing verification" : "Terminal 1 international arrivals"}</h2><p>{showUnverified ? "Potential YYZ arrivals with an unknown origin country or terminal assignment." : "Live flight statuses · Toronto local time · Sorted by scheduled arrival"}</p></div><div className="table-meta"><span className={`source-pill ${payload?.source === "live" ? "source-live" : ""}`}><i />{payload?.source === "live" ? "Fresh data" : payload ? "Cached data" : "Awaiting data"}</span><span>{payload ? `Updated ${freshnessLabel(payload.fetchedAt)} ET` : "—"}</span></div></div>

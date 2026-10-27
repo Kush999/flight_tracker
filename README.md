@@ -1,13 +1,13 @@
 # Pearson Flight Intelligence
 
-A single-page dashboard for today's live arrivals at Toronto Pearson (YYZ), focused on Terminal 1 international flights. The dashboard uses only verified data for its confirmed international count and explicitly surfaces missing origin and terminal information.
+A single-page dashboard for today's live arrivals at Toronto Pearson (YYZ), focused on Terminal 1 international flights. It highlights upcoming 30-minute arrival waves, identifies the busiest periods, and lists the grouped arrivals contributing to each peak. The dashboard uses only verified data for its confirmed international count and explicitly surfaces missing origin and terminal information.
 
 ## Stack
 
 - Next.js App Router and Route Handler
 - TypeScript with strict checking
 - Tailwind CSS (with custom dashboard styles)
-- Vitest for date, normalization, filtering, sorting, and missing-data tests
+- Vitest for date handling, normalization, filtering, sorting, missing-data, and arrival-wave tests
 
 ## Aviationstack key
 
