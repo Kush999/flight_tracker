@@ -61,6 +61,8 @@ The server keeps a five-minute cache per flight date and key in process memory. 
 
 The application requires no database or local file in production. Flight statuses may update during the day and terminal assignments may change; the dashboard reflects the provider's latest available information rather than guaranteed operational truth. Aviationstack says real-time status updates may be delayed by 30–60 seconds.
 
+For YYZ arrivals, the current Aviationstack response returns schedule timestamps with a `+00:00` suffix whose clock values match Pearson's published local times. The dashboard preserves the schedule's clock value rather than converting it, which would shift it by four or five hours. This is based on comparison with Pearson and should be rechecked if Aviationstack changes how it encodes these timestamps.
+
 ## Data references
 
 - [Aviationstack API documentation](https://aviationstack.com/documentation)

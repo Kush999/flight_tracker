@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { arrivalDateInToronto, countUnverified, filterFlights, normalizeFlights, todayInToronto } from "@/lib/flights";
+import { arrivalClockForDisplay, arrivalDateInToronto, countUnverified, filterFlights, normalizeFlights, todayInToronto } from "@/lib/flights";
 import { providerErrorFor } from "@/lib/aviationstack";
 
 describe("todayInToronto", () => {
@@ -15,16 +15,24 @@ describe("todayInToronto", () => {
 });
 
 describe("arrivalDateInToronto", () => {
-  it("uses the arrival instant's Toronto date instead of the provider flight date", () => {
-    // 02:30 UTC is 22:30 on the previous calendar day in Toronto in October.
-    expect(arrivalDateInToronto("2026-10-27T02:30:00Z")).toBe("2026-10-26");
+  it("uses the arrival schedule date as supplied for the YYZ-local schedule", () => {
+    expect(arrivalDateInToronto("2026-10-27T02:30:00+00:00")).toBe("2026-10-27");
   });
-  it("handles the daylight-saving offset in Toronto", () => {
-    expect(arrivalDateInToronto("2026-03-08T04:30:00Z")).toBe("2026-03-07");
+  it("preserves the schedule date across Toronto daylight-saving changes", () => {
+    expect(arrivalDateInToronto("2026-03-08T01:15:00+00:00")).toBe("2026-03-08");
   });
   it("returns null for missing or malformed arrival times", () => {
     expect(arrivalDateInToronto(null)).toBeNull();
     expect(arrivalDateInToronto("not-a-time")).toBeNull();
+  });
+});
+
+describe("arrivalClockForDisplay", () => {
+  it("preserves the YYZ-local clock from an offset timestamp", () => {
+    expect(arrivalClockForDisplay("2026-10-27T06:44:00+00:00")).toBe("06:44");
+  });
+  it("returns null when the schedule time is unavailable", () => {
+    expect(arrivalClockForDisplay(null)).toBeNull();
   });
 });
 

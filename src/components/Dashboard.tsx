@@ -1,18 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { countUnverified, filterFlights, todayInToronto, type DashboardPayload, type Flight } from "@/lib/flights";
+import { arrivalClockForDisplay, countUnverified, filterFlights, todayInToronto, type DashboardPayload, type Flight } from "@/lib/flights";
 
 type ApiResponse = DashboardPayload | { error: string; providerCode?: string; flightDate?: string };
 const dateLabel = (date: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date(`${date}T12:00:00Z`));
 const timeLabel = (value: string | null) => {
   if (!value) return "—";
-  // /flights provides zoned ISO timestamps; unzoned values are treated as Toronto local time.
-  const local = value.match(/^\d{4}-\d{2}-\d{2}[ T](\d{2}:\d{2})/);
-  if (local && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)) return local[1];
-  const parsed = new Date(value.includes("T") ? value : value.replace(" ", "T"));
-  if (Number.isNaN(parsed.getTime())) return value;
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit", hour12: false }).format(parsed);
+  // YYZ's returned schedule clock is airport-local despite its +00:00 suffix.
+  return arrivalClockForDisplay(value) ?? value;
 };
 const freshnessLabel = (value: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", hour: "numeric", minute: "2-digit", hour12: true }).format(new Date(value));
 const EMPTY_FLIGHTS: Flight[] = [];

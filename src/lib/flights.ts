@@ -47,19 +47,22 @@ export function todayInToronto(now: Date = new Date()): string {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-/** Returns the Toronto-local calendar date represented by an absolute provider timestamp. */
+/**
+ * Aviationstack's YYZ schedule timestamps carry a +00:00 suffix, but their
+ * wall-clock values match Pearson's published Toronto-local schedule times.
+ * Use the schedule's date component as the YYZ arrival date instead of
+ * converting that misleading offset as an instant.
+ */
 export function arrivalDateInToronto(value: string | null): string | null {
   if (!value) return null;
-  const instant = new Date(value.includes("T") ? value : value.replace(" ", "T"));
-  if (Number.isNaN(instant.getTime())) return null;
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit",
-  }).formatToParts(instant);
-  const part = (type: string) => parts.find((item) => item.type === type)?.value;
-  const year = part("year");
-  const month = part("month");
-  const day = part("day");
-  return year && month && day ? `${year}-${month}-${day}` : null;
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})[ T]\d{2}:\d{2}/);
+  return match?.[1] ?? null;
+}
+
+export function arrivalClockForDisplay(value: string | null): string | null {
+  if (!value) return null;
+  const match = value.match(/^\d{4}-\d{2}-\d{2}[ T](\d{2}:\d{2})/);
+  return match?.[1] ?? null;
 }
 
 export function normalizeFlights(input: unknown, resolveAirport?: AirportReferenceResolver, countryNameForCode?: (code: string | null) => string | null): Flight[] {
