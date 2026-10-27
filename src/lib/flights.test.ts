@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { countUnverified, filterFlights, normalizeFlights, todayInToronto } from "@/lib/flights";
+import { arrivalDateInToronto, countUnverified, filterFlights, normalizeFlights, todayInToronto } from "@/lib/flights";
 import { providerErrorFor } from "@/lib/aviationstack";
 
 describe("todayInToronto", () => {
@@ -11,6 +11,20 @@ describe("todayInToronto", () => {
   });
   it("handles Toronto midnight", () => {
     expect(todayInToronto(new Date("2026-10-27T04:15:00.000Z"))).toBe("2026-10-27");
+  });
+});
+
+describe("arrivalDateInToronto", () => {
+  it("uses the arrival instant's Toronto date instead of the provider flight date", () => {
+    // 02:30 UTC is 22:30 on the previous calendar day in Toronto in October.
+    expect(arrivalDateInToronto("2026-10-27T02:30:00Z")).toBe("2026-10-26");
+  });
+  it("handles the daylight-saving offset in Toronto", () => {
+    expect(arrivalDateInToronto("2026-03-08T04:30:00Z")).toBe("2026-03-07");
+  });
+  it("returns null for missing or malformed arrival times", () => {
+    expect(arrivalDateInToronto(null)).toBeNull();
+    expect(arrivalDateInToronto("not-a-time")).toBeNull();
   });
 });
 

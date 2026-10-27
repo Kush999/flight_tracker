@@ -1,4 +1,4 @@
-import { normalizeFlights, type Flight } from "@/lib/flights";
+import { arrivalDateInToronto, normalizeFlights, type Flight } from "@/lib/flights";
 import { countryNameForCode, resolveAirport } from "@/lib/airport-reference.server";
 
 const BASE_URL = "https://api.aviationstack.com/v1/flights";
@@ -95,7 +95,9 @@ async function fetchAndCache(key: string, cacheKey: string, flightDate: string):
     let pageFlights: Flight[];
     try { pageFlights = normalizeFlights(body, resolveAirport, countryNameForCode); } catch { throw new ProviderError("invalid", "Aviationstack returned flight data in an unexpected format."); }
     providerRows += pageFlights.length;
-    all.push(...pageFlights.filter((flight) => flight.flightDate === flightDate));
+    // `flight_date` can follow the provider's schedule date, which may not be
+    // the arrival's calendar date in Toronto for overnight or date-line routes.
+    all.push(...pageFlights.filter((flight) => arrivalDateInToronto(flight.scheduledArrival) === flightDate));
     const pagination = (body as { pagination?: { count?: number; total?: number; limit?: number; offset?: number } }).pagination;
     if (!pagination || pagination.total === undefined) {
       if (pageFlights.length < PAGE_SIZE) break;

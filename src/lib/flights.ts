@@ -47,6 +47,21 @@ export function todayInToronto(now: Date = new Date()): string {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+/** Returns the Toronto-local calendar date represented by an absolute provider timestamp. */
+export function arrivalDateInToronto(value: string | null): string | null {
+  if (!value) return null;
+  const instant = new Date(value.includes("T") ? value : value.replace(" ", "T"));
+  if (Number.isNaN(instant.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(instant);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value;
+  const year = part("year");
+  const month = part("month");
+  const day = part("day");
+  return year && month && day ? `${year}-${month}-${day}` : null;
+}
+
 export function normalizeFlights(input: unknown, resolveAirport?: AirportReferenceResolver, countryNameForCode?: (code: string | null) => string | null): Flight[] {
   const data = record(input).data;
   if (!Array.isArray(data)) throw new Error("The flight provider returned an unexpected response.");
@@ -97,9 +112,11 @@ export function normalizeFlights(input: unknown, resolveAirport?: AirportReferen
 export function filterFlights(flights: Flight[], excludeUs: boolean): Flight[] {
   return flights.filter((flight) => flight.isYyz === true && flight.isInternational === true && flight.isTerminal1 === true && !(excludeUs && flight.isUsOrigin === true))
     .sort((a, b) => {
-      if (!a.scheduledArrival) return 1;
-      if (!b.scheduledArrival) return -1;
-      return a.scheduledArrival.localeCompare(b.scheduledArrival);
+      const aTime = a.scheduledArrival ? Date.parse(a.scheduledArrival) : Number.NaN;
+      const bTime = b.scheduledArrival ? Date.parse(b.scheduledArrival) : Number.NaN;
+      if (Number.isNaN(aTime)) return Number.isNaN(bTime) ? 0 : 1;
+      if (Number.isNaN(bTime)) return -1;
+      return aTime - bTime;
     });
 }
 
