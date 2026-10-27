@@ -2,6 +2,7 @@ export type Flight = {
   id: string;
   scheduledArrival: string | null;
   estimatedArrival: string | null;
+  actualArrival: string | null;
   flightNumber: string | null;
   airline: string | null;
   originAirport: string | null;
@@ -11,13 +12,15 @@ export type Flight = {
   originCountryCode: string | null;
   terminal: string | null;
   status: string | null;
+  arrivalCode: string | null;
+  isYyz: boolean | null;
   isTerminal1: boolean | null;
   isInternational: boolean | null;
   isUsOrigin: boolean | null;
 };
 
 export type DashboardPayload = {
-  targetDate: string;
+  flightDate: string;
   fetchedAt: string;
   flights: Flight[];
   source: "live" | "cache";
@@ -32,7 +35,7 @@ const record = (value: unknown): UnknownRecord => value && typeof value === "obj
 const string = (value: unknown): string | null => typeof value === "string" && value.trim() ? value.trim() : null;
 const firstString = (...values: unknown[]): string | null => values.map(string).find(Boolean) ?? null;
 
-export function tomorrowInToronto(now: Date = new Date()): string {
+export function todayInToronto(now: Date = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Toronto", year: "numeric", month: "2-digit", day: "2-digit",
   }).formatToParts(now);
@@ -40,16 +43,7 @@ export function tomorrowInToronto(now: Date = new Date()): string {
   const year = Number(value("year"));
   const month = Number(value("month"));
   const day = Number(value("day"));
-  const next = new Date(Date.UTC(year, month - 1, day + 1));
-  return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, "0")}-${String(next.getUTCDate()).padStart(2, "0")}`;
-}
-
-export function isProviderFutureDateAllowed(targetDate: string, now: Date = new Date()): boolean {
-  const nextUtcDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
-  const earliest = `${nextUtcDay.getUTCFullYear()}-${String(nextUtcDay.getUTCMonth() + 1).padStart(2, "0")}-${String(nextUtcDay.getUTCDate()).padStart(2, "0")}`;
-  const latestDate = new Date(Date.UTC(now.getUTCFullYear() + 1, now.getUTCMonth(), now.getUTCDate()));
-  const latest = `${latestDate.getUTCFullYear()}-${String(latestDate.getUTCMonth() + 1).padStart(2, "0")}-${String(latestDate.getUTCDate()).padStart(2, "0")}`;
-  return targetDate >= earliest && targetDate <= latest;
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 export function normalizeFlights(input: unknown, resolveAirport?: AirportReferenceResolver, countryNameForCode?: (code: string | null) => string | null): Flight[] {
@@ -62,8 +56,8 @@ export function normalizeFlights(input: unknown, resolveAirport?: AirportReferen
     const airline = record(item.airline);
     const flight = record(item.flight);
     const terminal = firstString(arrival.terminal);
-    const originCode = firstString(departure.iataCode);
-    const originIcao = firstString(departure.icaoCode);
+    const originCode = firstString(departure.iata);
+    const originIcao = firstString(departure.icao);
     const airport = resolveAirport?.(originCode, originIcao) ?? null;
     const originCountryCode = firstString(departure.countryCode, departure.country_code, airport?.countryCode);
     const originCountry = firstString(departure.countryName, departure.country, countryNameForCode?.(originCountryCode));
@@ -73,13 +67,15 @@ export function normalizeFlights(input: unknown, resolveAirport?: AirportReferen
     const namedCountry = originCountry?.toLowerCase();
     const isInternational = countryCode ? !["CA", "CAN"].includes(countryCode) : namedCountry ? !["canada"].includes(namedCountry) : null;
     const isUsOrigin = countryCode ? ["US", "USA"].includes(countryCode) : namedCountry ? ["united states", "united states of america"].includes(namedCountry) : null;
-    const flightNumber = firstString(flight.iataNumber, flight.number);
+    const flightNumber = firstString(flight.iata);
+    const arrivalCode = firstString(arrival.iata);
     return {
-      id: flightNumber ?? `${originCode ?? "unknown"}-${firstString(arrival.scheduledTime) ?? index}`,
-      scheduledArrival: firstString(arrival.scheduledTime),
-      estimatedArrival: firstString(arrival.estimatedTime),
+      id: flightNumber ?? `${originCode ?? "unknown"}-${firstString(arrival.scheduled) ?? index}`,
+      scheduledArrival: firstString(arrival.scheduled),
+      estimatedArrival: firstString(arrival.estimated),
+      actualArrival: firstString(arrival.actual),
       flightNumber,
-      airline: firstString(airline.name, airline.iataCode),
+      airline: firstString(airline.name, airline.iata),
       originAirport: firstString(departure.airportName, departure.airport, airport?.name),
       originCode,
       originCity: firstString(departure.city, airport?.city),
@@ -88,6 +84,8 @@ export function normalizeFlights(input: unknown, resolveAirport?: AirportReferen
       terminal,
       status: firstString(item.status, item.flight_status),
       isTerminal1,
+      arrivalCode,
+      isYyz: arrivalCode ? arrivalCode.toUpperCase() === "YYZ" : null,
       isInternational,
       isUsOrigin,
     };
@@ -95,7 +93,7 @@ export function normalizeFlights(input: unknown, resolveAirport?: AirportReferen
 }
 
 export function filterFlights(flights: Flight[], excludeUs: boolean): Flight[] {
-  return flights.filter((flight) => flight.isInternational === true && flight.isTerminal1 === true && !(excludeUs && flight.isUsOrigin === true))
+  return flights.filter((flight) => flight.isYyz === true && flight.isInternational === true && flight.isTerminal1 === true && !(excludeUs && flight.isUsOrigin === true))
     .sort((a, b) => {
       if (!a.scheduledArrival) return 1;
       if (!b.scheduledArrival) return -1;
@@ -104,5 +102,5 @@ export function filterFlights(flights: Flight[], excludeUs: boolean): Flight[] {
 }
 
 export function countUnverified(flights: Flight[]): number {
-  return flights.filter((flight) => flight.isInternational === null || flight.isTerminal1 === null).length;
+  return flights.filter((flight) => flight.isYyz !== false && (flight.isYyz === null || flight.isInternational === null || flight.isTerminal1 === null)).length;
 }

@@ -1,10 +1,10 @@
 import { normalizeFlights, type Flight } from "@/lib/flights";
 import { countryNameForCode, resolveAirport } from "@/lib/airport-reference.server";
 
-const BASE_URL = "https://api.aviationstack.com/v1/flightsFuture";
+const BASE_URL = "https://api.aviationstack.com/v1/flights";
 const PAGE_SIZE = 100;
 const MAX_PAGES = 3;
-const CACHE_TTL_MS = 12 * 60 * 1000;
+const CACHE_TTL_MS = 5 * 60 * 1000;
 const REQUEST_GAP_MS = 10_000;
 type CacheEntry = { data: Flight[]; expires: number; fetchedAt: string; truncated: boolean };
 type FlightResult = { flights: Flight[]; fetchedAt: string; source: "live" | "cache"; truncated: boolean };
@@ -22,7 +22,7 @@ export class ProviderError extends Error {
 export function providerErrorFor(status: number, code = ""): ProviderError {
   const normalizedCode = code.toLowerCase();
   if (status === 401 || normalizedCode.includes("invalid_access_key")) return new ProviderError("auth", "Aviationstack rejected the API key. Check AVIATIONSTACK_ACCESS_KEY.");
-  if (status === 403 || normalizedCode.includes("function_access_restricted")) return new ProviderError("restricted", "Your Aviationstack plan does not allow future flight schedules. A paid plan with /flightsFuture access is required.");
+  if (status === 403 || normalizedCode.includes("function_access_restricted")) return new ProviderError("restricted", "Your Aviationstack plan does not allow real-time flight data. Check that live flights are included in the account plan.");
   if (status === 429) return new ProviderError("rate", "Aviationstack request limit reached. Wait before refreshing.");
   return new ProviderError("unavailable", "Aviationstack is temporarily unavailable. Try again later.");
 }
@@ -45,9 +45,8 @@ async function requestPage(key: string, date: string, offset: number): Promise<u
   await waitForRateSlot(key);
   const url = new URL(BASE_URL);
   url.searchParams.set("access_key", key);
-  url.searchParams.set("iataCode", "YYZ");
-  url.searchParams.set("type", "arrival");
-  url.searchParams.set("date", date);
+  url.searchParams.set("arr_iata", "YYZ");
+  url.searchParams.set("flight_date", date);
   url.searchParams.set("limit", String(PAGE_SIZE));
   url.searchParams.set("offset", String(offset));
   let response: Response;
@@ -67,16 +66,16 @@ async function requestPage(key: string, date: string, offset: number): Promise<u
   return body;
 }
 
-export async function getFlights(date: string, refresh = false): Promise<FlightResult> {
+export async function getFlights(flightDate: string, refresh = false): Promise<FlightResult> {
   const key = process.env.AVIATIONSTACK_ACCESS_KEY;
   if (!key) throw new ProviderError("auth", "Setup required: add AVIATIONSTACK_ACCESS_KEY to the server environment.");
-  const cacheKey = `${key}:${date}`;
+  const cacheKey = `${key}:${flightDate}`;
   const cached = cache.get(cacheKey);
   if (!refresh && cached && cached.expires > Date.now()) return { flights: cached.data, fetchedAt: cached.fetchedAt, truncated: cached.truncated, source: "cache" };
   const pending = inFlight.get(cacheKey);
   if (pending) return { ...(await pending), source: "cache" };
 
-  const request = fetchAndCache(key, cacheKey, date);
+  const request = fetchAndCache(key, cacheKey, flightDate);
   inFlight.set(cacheKey, request);
   try {
     return await request;
@@ -85,12 +84,12 @@ export async function getFlights(date: string, refresh = false): Promise<FlightR
   }
 }
 
-async function fetchAndCache(key: string, cacheKey: string, date: string): Promise<FlightResult> {
+async function fetchAndCache(key: string, cacheKey: string, flightDate: string): Promise<FlightResult> {
   const all: Flight[] = [];
   let truncated = false;
   let offset = 0;
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const body = await requestPage(key, date, offset);
+    const body = await requestPage(key, flightDate, offset);
     let flights: Flight[];
     try { flights = normalizeFlights(body, resolveAirport, countryNameForCode); } catch { throw new ProviderError("invalid", "Aviationstack returned flight data in an unexpected format."); }
     all.push(...flights);

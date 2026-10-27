@@ -1,15 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { countUnverified, filterFlights, tomorrowInToronto, type DashboardPayload, type Flight } from "@/lib/flights";
+import { countUnverified, filterFlights, todayInToronto, type DashboardPayload, type Flight } from "@/lib/flights";
 
-type ApiResponse = DashboardPayload | { error: string; targetDate?: string };
+type ApiResponse = DashboardPayload | { error: string; flightDate?: string };
 const dateLabel = (date: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date(`${date}T12:00:00Z`));
 const timeLabel = (value: string | null) => {
   if (!value) return "—";
-  // flightsFuture supplies Toronto local wall time without a timezone suffix.
+  // /flights provides zoned ISO timestamps; unzoned values are treated as Toronto local time.
   const local = value.match(/^\d{4}-\d{2}-\d{2}[ T](\d{2}:\d{2})/);
-  if (local) return local[1];
+  if (local && !/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value)) return local[1];
   const parsed = new Date(value.includes("T") ? value : value.replace(" ", "T"));
   if (Number.isNaN(parsed.getTime())) return value;
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit", hour12: false }).format(parsed);
@@ -19,12 +19,13 @@ const EMPTY_FLIGHTS: Flight[] = [];
 
 export default function Dashboard() {
   const [payload, setPayload] = useState<DashboardPayload | null>(null);
-  const [targetDate, setTargetDate] = useState<string | null>(null);
+  const [flightDate, setFlightDate] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [excludeUs, setExcludeUs] = useState(false);
   const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [showUnverified, setShowUnverified] = useState(false);
 
   const load = useCallback(async (refresh = false) => {
@@ -34,7 +35,7 @@ export default function Dashboard() {
     try {
       const response = await fetch(`/api/flights${refresh ? "?refresh=true" : ""}`, { cache: "no-store" });
       const body = await response.json() as ApiResponse;
-      if (body.targetDate) setTargetDate(body.targetDate);
+      if (body.flightDate) setFlightDate(body.flightDate);
       if (!response.ok || "error" in body) throw new Error("error" in body ? body.error : "Could not load flight data.");
       setPayload(body);
     } catch (err) {
@@ -45,51 +46,53 @@ export default function Dashboard() {
     }
   }, []);
 
-  useEffect(() => { setTargetDate(tomorrowInToronto()); void load(); }, [load]);
+  useEffect(() => { setFlightDate(todayInToronto()); void load(); }, [load]);
 
   const flights = payload?.flights ?? EMPTY_FLIGHTS;
   const verified = useMemo(() => filterFlights(flights, excludeUs), [flights, excludeUs]);
-  const terminalOne = flights.filter((flight) => flight.isTerminal1 === true);
+  const terminalOne = flights.filter((flight) => flight.isYyz === true && flight.isTerminal1 === true);
   const unverifiedCount = countUnverified(flights);
   const countryCount = new Set(verified.map((flight) => flight.originCountryCode ?? flight.originCountry).filter(Boolean)).size;
-  const visible = (showUnverified ? flights.filter((flight) => flight.isInternational === null || flight.isTerminal1 === null) : verified)
+  const statuses = Array.from(new Set(flights.map((flight) => flight.status).filter((status): status is string => Boolean(status)))).sort();
+  const visible = (showUnverified ? flights.filter((flight) => flight.isYyz !== false && (flight.isYyz === null || flight.isInternational === null || flight.isTerminal1 === null)) : verified)
     .filter((flight) => !excludeUs || (showUnverified ? flight.isUsOrigin === false : flight.isUsOrigin !== true))
+    .filter((flight) => statusFilter === "all" || flight.status === statusFilter)
     .filter((flight) => `${flight.airline ?? ""} ${flight.flightNumber ?? ""} ${flight.originAirport ?? ""} ${flight.originCode ?? ""} ${flight.originCountry ?? ""}`.toLowerCase().includes(query.toLowerCase()));
 
   return <main className="shell">
-    <div className="topline"><div className="brand"><div className="brand-mark"><PlaneIcon /></div><span>PEARSON <b>FLIGHT INTELLIGENCE</b></span></div><span className="live-label"><i /> SCHEDULED OPERATIONS</span></div>
+    <div className="topline"><div className="brand"><div className="brand-mark"><PlaneIcon /></div><span>PEARSON <b>FLIGHT INTELLIGENCE</b></span></div><span className="live-label"><i /> LIVE ARRIVALS</span></div>
     <header className="hero">
       <div>
         <div className="eyebrow">TORONTO PEARSON · YYZ</div>
         <h1>International arrivals</h1>
-        <p className="subtitle">Terminal 1 · Tomorrow&apos;s scheduled inbound flights</p>
+        <p className="subtitle">Terminal 1 · Today&apos;s live inbound flights</p>
       </div>
       <div className="hero-actions">
-        <div className="date-block"><span className="date-caption">ARRIVAL DATE · TORONTO</span><strong>{targetDate ? dateLabel(targetDate) : "Tomorrow · Toronto local date"}</strong></div>
+        <div className="date-block"><span className="date-caption">ARRIVAL DATE · TORONTO</span><strong>{flightDate ? dateLabel(flightDate) : "Today · Toronto local date"}</strong></div>
         <button className="refresh-button" onClick={() => void load(true)} disabled={loading || refreshing}><RefreshIcon spin={refreshing} />{refreshing ? "Refreshing…" : "Refresh data"}</button>
       </div>
     </header>
 
     <section className="metrics" aria-label="Arrival summary">
       <Metric icon={<GlobeIcon />} label="Confirmed international" value={loading ? "—" : String(verified.length)} detail="T1 arrivals with verified foreign origin" color="blue" />
-      <Metric icon={<TerminalIcon />} label="Terminal 1 confirmed" value={loading ? "—" : String(terminalOne.length)} detail="Terminal assignment supplied by provider" color="teal" />
+      <Metric icon={<TerminalIcon />} label="Terminal 1 confirmed" value={loading ? "—" : String(terminalOne.length)} detail="YYZ arrivals assigned to Terminal 1" color="teal" />
       <Metric icon={<PinIcon />} label="Origin countries" value={loading ? "—" : String(countryCount)} detail="Among confirmed eligible arrivals" color="purple" />
-      <Metric icon={<AlertIcon />} label="Needs verification" value={loading ? "—" : String(unverifiedCount)} detail="Origin country or terminal is unavailable" color="amber" />
+      <Metric icon={<AlertIcon />} label="Needs verification" value={loading ? "—" : String(unverifiedCount)} detail="Origin country, terminal, or destination unavailable" color="amber" />
     </section>
 
-    <section className="notice"><div className="notice-symbol"><InfoIcon /></div><p><strong>Data coverage note</strong><span>Aviationstack supplies the schedule and airport codes. Origin country, city, and name are resolved from a separate airport reference; unmatched origin codes remain unverified and outside the confirmed count.</span></p><button onClick={() => setShowUnverified(!showUnverified)}>{showUnverified ? "View confirmed arrivals" : "Review unverified arrivals"}<ArrowIcon /></button></section>
+    <section className="notice"><div className="notice-symbol"><InfoIcon /></div><p><strong>Live feed and request budget</strong><span>Free Aviationstack accounts include real-time flights but allow 100 provider requests per month. Responses are cached for five minutes; this dashboard does not auto-poll. Origin details use a separate airport-code reference.</span></p><button onClick={() => setShowUnverified(!showUnverified)}>{showUnverified ? "View confirmed arrivals" : "Review unverified arrivals"}<ArrowIcon /></button></section>
 
     {error && <div className="error-banner" role="alert"><AlertIcon /><div><strong>Flight data unavailable</strong><span>{error}</span></div><button onClick={() => void load()}>Try again</button></div>}
 
     <section className="table-card">
-      <div className="table-heading"><div><div className="eyebrow">TOMORROW’S FLIGHT BOARD</div><h2>{showUnverified ? "Arrivals needing verification" : "Terminal 1 international arrivals"}</h2><p>{showUnverified ? "Potential arrivals with an unknown origin country or terminal assignment." : "Scheduled times shown in Toronto local time · Sorted by arrival"}</p></div><div className="table-meta"><span className={`source-pill ${payload?.source === "live" ? "source-live" : ""}`}><i />{payload?.source === "live" ? "Fresh data" : payload ? "Cached data" : "Awaiting data"}</span><span>{payload ? `Updated ${freshnessLabel(payload.fetchedAt)} ET` : "—"}</span></div></div>
-      <div className="filters"><label className="search"><SearchIcon /><input aria-label="Search flights" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search airline, flight or origin" /></label><label className="check"><input type="checkbox" checked={excludeUs} onChange={(e) => setExcludeUs(e.target.checked)} /><span className="checkmark" />Exclude US origins</label><span className="results-count">{loading ? "Loading flights…" : `${visible.length} ${visible.length === 1 ? "flight" : "flights"}`}</span></div>
+      <div className="table-heading"><div><div className="eyebrow">TODAY’S LIVE FLIGHT BOARD</div><h2>{showUnverified ? "Arrivals needing verification" : "Terminal 1 international arrivals"}</h2><p>{showUnverified ? "Potential YYZ arrivals with an unknown origin country or terminal assignment." : "Live flight statuses · Toronto local time · Sorted by scheduled arrival"}</p></div><div className="table-meta"><span className={`source-pill ${payload?.source === "live" ? "source-live" : ""}`}><i />{payload?.source === "live" ? "Fresh data" : payload ? "Cached data" : "Awaiting data"}</span><span>{payload ? `Updated ${freshnessLabel(payload.fetchedAt)} ET` : "—"}</span></div></div>
+      <div className="filters"><label className="search"><SearchIcon /><input aria-label="Search flights" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search airline, flight or origin" /></label><label className="check"><input type="checkbox" checked={excludeUs} onChange={(e) => setExcludeUs(e.target.checked)} /><span className="checkmark" />Exclude US origins</label>{statuses.length > 0 && <label className="status-filter">Status<select aria-label="Filter by status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="all">All statuses</option>{statuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></label>}<span className="results-count">{loading ? "Loading flights…" : `${visible.length} ${visible.length === 1 ? "flight" : "flights"}`}</span></div>
 
       <div className="table-scroll"><table><thead><tr><th>ARRIVAL · TORONTO</th><th>FLIGHT</th><th>AIRLINE</th><th>ORIGIN</th><th>TERMINAL</th><th>STATUS</th></tr></thead><tbody>
-        {loading ? <tr><td colSpan={6} className="state-cell"><div className="spinner" /><strong>Loading tomorrow&apos;s schedule</strong><span>Connecting securely to Aviationstack…</span></td></tr> : !error && visible.length === 0 ? <tr><td colSpan={6} className="state-cell"><div className="empty-icon"><PlaneIcon /></div><strong>{showUnverified ? "No arrivals need verification" : query ? "No flights match your search" : "No confirmed arrivals to display"}</strong><span>{showUnverified ? "No potential arrivals with unknown origin or terminal data were returned." : "The provider may have no matching flights, or required origin data may not be available."}</span></td></tr> : visible.map((flight) => <FlightRow key={flight.id} flight={flight} unverified={showUnverified} />)}
+        {loading ? <tr><td colSpan={6} className="state-cell"><div className="spinner" /><strong>Loading today&apos;s live arrivals</strong><span>Connecting securely to Aviationstack…</span></td></tr> : !error && visible.length === 0 ? <tr><td colSpan={6} className="state-cell"><div className="empty-icon"><PlaneIcon /></div><strong>{showUnverified ? "No arrivals need verification" : query || statusFilter !== "all" ? "No flights match these filters" : "No confirmed arrivals to display"}</strong><span>{showUnverified ? "No potential arrivals with unknown origin or terminal data were returned." : "The provider may have no matching arrivals, or required origin data may not be available."}</span></td></tr> : visible.map((flight) => <FlightRow key={flight.id} flight={flight} unverified={showUnverified} />)}
       </tbody></table></div>
       {payload?.truncated && <div className="truncated-note"><AlertIcon />Results reached the safe 300-record pagination limit. Some arrivals may not be shown.</div>}
-      <div className="table-footer"><span><span className="legend-dot" /> Scheduled arrival <span className="legend-separator">·</span> Estimated arrival shown only when supplied</span><span>Schedules: Aviationstack · Origin reference: OurAirports</span></div>
+      <div className="table-footer"><span><span className="legend-dot" /> Scheduled <span className="legend-separator">·</span> Estimated / actual shown when supplied</span><span>Live data: Aviationstack · Origin: OurAirports</span></div>
     </section>
     <footer><span>For planning use. Flight schedules and terminal assignments can change.</span><span>All times shown in Toronto local time (ET)</span></footer>
   </main>;
@@ -101,7 +104,7 @@ function Metric({ icon, label, value, detail, color }: { icon: React.ReactNode; 
 
 function FlightRow({ flight, unverified }: { flight: Flight; unverified: boolean }) {
   const terminalLabel = flight.isTerminal1 === true ? "T1" : flight.terminal ?? "Unknown";
-  return <tr><td><strong className="arrival-time">{timeLabel(flight.scheduledArrival)}</strong>{flight.estimatedArrival && <span className="time-sub">Est. {timeLabel(flight.estimatedArrival)}</span>}</td><td><strong className="flight-number">{flight.flightNumber ?? "Unknown"}</strong></td><td>{flight.airline ?? "Not provided"}</td><td><strong>{flight.originCode ?? "Unknown"}</strong><span className="origin-sub">{flight.originCity ?? flight.originAirport ?? "Airport name unavailable"}{flight.originCountry ? `, ${flight.originCountry}` : unverified ? ", country unverified" : ""}</span></td><td><span className={`terminal-tag ${flight.isTerminal1 === null ? "terminal-unknown" : ""}`}>{terminalLabel}</span></td><td>{flight.status ? <span className="status-tag">{flight.status}</span> : <span className="status-unknown">Not provided</span>}</td></tr>;
+  return <tr><td><strong className="arrival-time">{timeLabel(flight.scheduledArrival)}</strong>{flight.estimatedArrival && <span className="time-sub">Est. {timeLabel(flight.estimatedArrival)}</span>}{flight.actualArrival && <span className="time-sub actual-time">Actual {timeLabel(flight.actualArrival)}</span>}</td><td><strong className="flight-number">{flight.flightNumber ?? "Unknown"}</strong></td><td>{flight.airline ?? "Not provided"}</td><td><strong>{flight.originCode ?? "Unknown"}</strong><span className="origin-sub">{flight.originCity ?? flight.originAirport ?? "Airport name unavailable"}{flight.originCountry ? `, ${flight.originCountry}` : unverified ? ", country unverified" : ""}</span></td><td><span className={`terminal-tag ${flight.isTerminal1 === null ? "terminal-unknown" : ""}`}>{terminalLabel}</span></td><td>{flight.status ? <span className="status-tag">{flight.status}</span> : <span className="status-unknown">Not provided</span>}</td></tr>;
 }
 
 function PlaneIcon() { return <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m2.5 12 19-8-6.2 18-3.1-7.8L2.5 12Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/><path d="m12.2 14.2 5.1-5.1" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>; }
