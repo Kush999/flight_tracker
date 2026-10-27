@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { countUnverified, filterFlights, todayInToronto, type DashboardPayload, type Flight } from "@/lib/flights";
 
-type ApiResponse = DashboardPayload | { error: string; flightDate?: string };
+type ApiResponse = DashboardPayload | { error: string; providerCode?: string; flightDate?: string };
 const dateLabel = (date: string) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto", weekday: "long", month: "long", day: "numeric", year: "numeric" }).format(new Date(`${date}T12:00:00Z`));
 const timeLabel = (value: string | null) => {
   if (!value) return "—";
@@ -36,7 +36,7 @@ export default function Dashboard() {
       const response = await fetch(`/api/flights${refresh ? "?refresh=true" : ""}`, { cache: "no-store" });
       const body = await response.json() as ApiResponse;
       if (body.flightDate) setFlightDate(body.flightDate);
-      if (!response.ok || "error" in body) throw new Error("error" in body ? body.error : "Could not load flight data.");
+      if (!response.ok || "error" in body) throw new Error("error" in body ? `${body.error}${body.providerCode ? ` (provider code: ${body.providerCode})` : ""}` : "Could not load flight data.");
       setPayload(body);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load flight data.");
@@ -80,7 +80,7 @@ export default function Dashboard() {
       <Metric icon={<AlertIcon />} label="Needs verification" value={loading ? "—" : String(unverifiedCount)} detail="Origin country, terminal, or destination unavailable" color="amber" />
     </section>
 
-    <section className="notice"><div className="notice-symbol"><InfoIcon /></div><p><strong>Live feed and request budget</strong><span>Free Aviationstack accounts include real-time flights but allow 100 provider requests per month. Responses are cached for five minutes; this dashboard does not auto-poll. Origin details use a separate airport-code reference.</span></p><button onClick={() => setShowUnverified(!showUnverified)}>{showUnverified ? "View confirmed arrivals" : "Review unverified arrivals"}<ArrowIcon /></button></section>
+    <section className="notice"><div className="notice-symbol"><InfoIcon /></div><p><strong>Live feed and plan coverage</strong><span>Free accounts include unfiltered real-time data (100 requests/month). YYZ route filtering may require a paid plan. Responses are cached for five minutes; this dashboard does not auto-poll.</span></p><button onClick={() => setShowUnverified(!showUnverified)}>{showUnverified ? "View confirmed arrivals" : "Review unverified arrivals"}<ArrowIcon /></button></section>
 
     {error && <div className="error-banner" role="alert"><AlertIcon /><div><strong>Flight data unavailable</strong><span>{error}</span></div><button onClick={() => void load()}>Try again</button></div>}
 

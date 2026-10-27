@@ -22,6 +22,6 @@ export async function GET(request: Request) {
   } catch (error) {
     const providerError = error instanceof ProviderError ? error : new ProviderError("unavailable", "Flight data is temporarily unavailable.");
     const status = providerError.kind === "auth" ? (process.env.AVIATIONSTACK_ACCESS_KEY ? 502 : 503) : providerError.kind === "restricted" ? 403 : providerError.kind === "rate" ? 429 : providerError.kind === "invalid" ? 502 : 503;
-    return NextResponse.json({ error: providerError.message, flightDate }, { status });
+    return NextResponse.json({ error: providerError.message, providerCode: providerError.providerCode, flightDate }, { status });
   }
 }

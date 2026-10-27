@@ -1,5 +1,6 @@
 export type Flight = {
   id: string;
+  flightDate: string | null;
   scheduledArrival: string | null;
   estimatedArrival: string | null;
   actualArrival: string | null;
@@ -71,6 +72,7 @@ export function normalizeFlights(input: unknown, resolveAirport?: AirportReferen
     const arrivalCode = firstString(arrival.iata);
     return {
       id: flightNumber ?? `${originCode ?? "unknown"}-${firstString(arrival.scheduled) ?? index}`,
+      flightDate: firstString(item.flight_date),
       scheduledArrival: firstString(arrival.scheduled),
       estimatedArrival: firstString(arrival.estimated),
       actualArrival: firstString(arrival.actual),

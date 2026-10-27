@@ -14,16 +14,18 @@ const requestQueue = new Map<string, Promise<void>>();
 const inFlight = new Map<string, Promise<FlightResult>>();
 
 export class ProviderError extends Error {
-  constructor(public readonly kind: "auth" | "restricted" | "rate" | "timeout" | "unavailable" | "invalid", message: string) {
+  constructor(public readonly kind: "auth" | "restricted" | "rate" | "timeout" | "unavailable" | "invalid", message: string, public readonly providerCode?: string) {
     super(message);
   }
 }
 
 export function providerErrorFor(status: number, code = ""): ProviderError {
   const normalizedCode = code.toLowerCase();
-  if (status === 401 || normalizedCode.includes("invalid_access_key")) return new ProviderError("auth", "Aviationstack rejected the API key. Check AVIATIONSTACK_ACCESS_KEY.");
-  if (status === 403 || normalizedCode.includes("function_access_restricted")) return new ProviderError("restricted", "Your Aviationstack plan does not allow real-time flight data. Check that live flights are included in the account plan.");
-  if (status === 429) return new ProviderError("rate", "Aviationstack request limit reached. Wait before refreshing.");
+  const safeCode = /^[a-z0-9_]{1,80}$/i.test(code) ? code : undefined;
+  if (status === 401 || normalizedCode.includes("invalid_access_key")) return new ProviderError("auth", "Aviationstack rejected the API key. Check AVIATIONSTACK_ACCESS_KEY.", safeCode);
+  if (normalizedCode.includes("function_access_restricted")) return new ProviderError("restricted", "Aviationstack restricted a query feature. The Free plan includes unfiltered real-time data, but route filtering for YYZ may require a paid plan.", safeCode);
+  if (status === 403) return new ProviderError("restricted", "Aviationstack refused this request. Check API access, plan permissions, and any provider error code shown.", safeCode);
+  if (status === 429) return new ProviderError("rate", "Aviationstack request limit reached. Wait before refreshing.", safeCode);
   return new ProviderError("unavailable", "Aviationstack is temporarily unavailable. Try again later.");
 }
 
@@ -41,12 +43,11 @@ async function waitForRateSlot(key: string): Promise<void> {
   release();
 }
 
-async function requestPage(key: string, date: string, offset: number): Promise<unknown> {
+async function requestPage(key: string, offset: number): Promise<unknown> {
   await waitForRateSlot(key);
   const url = new URL(BASE_URL);
   url.searchParams.set("access_key", key);
   url.searchParams.set("arr_iata", "YYZ");
-  url.searchParams.set("flight_date", date);
   url.searchParams.set("limit", String(PAGE_SIZE));
   url.searchParams.set("offset", String(offset));
   let response: Response;
@@ -86,23 +87,25 @@ export async function getFlights(flightDate: string, refresh = false): Promise<F
 
 async function fetchAndCache(key: string, cacheKey: string, flightDate: string): Promise<FlightResult> {
   const all: Flight[] = [];
+  let providerRows = 0;
   let truncated = false;
   let offset = 0;
   for (let page = 0; page < MAX_PAGES; page += 1) {
-    const body = await requestPage(key, flightDate, offset);
-    let flights: Flight[];
-    try { flights = normalizeFlights(body, resolveAirport, countryNameForCode); } catch { throw new ProviderError("invalid", "Aviationstack returned flight data in an unexpected format."); }
-    all.push(...flights);
+    const body = await requestPage(key, offset);
+    let pageFlights: Flight[];
+    try { pageFlights = normalizeFlights(body, resolveAirport, countryNameForCode); } catch { throw new ProviderError("invalid", "Aviationstack returned flight data in an unexpected format."); }
+    providerRows += pageFlights.length;
+    all.push(...pageFlights.filter((flight) => flight.flightDate === flightDate));
     const pagination = (body as { pagination?: { count?: number; total?: number; limit?: number; offset?: number } }).pagination;
     if (!pagination || pagination.total === undefined) {
-      if (flights.length < PAGE_SIZE) break;
+      if (pageFlights.length < PAGE_SIZE) break;
       if (page === MAX_PAGES - 1) truncated = true;
-      offset += flights.length;
+      offset += pageFlights.length;
       continue;
     }
-    if (all.length >= pagination.total) break;
-    if (page === MAX_PAGES - 1) truncated = all.length < pagination.total;
-    offset = (pagination.offset ?? offset) + (pagination.count ?? flights.length);
+    if (providerRows >= pagination.total) break;
+    if (page === MAX_PAGES - 1) truncated = providerRows < pagination.total;
+    offset = (pagination.offset ?? offset) + (pagination.count ?? pageFlights.length);
   }
   const fetchedAt = new Date().toISOString();
   const entry: CacheEntry = { data: all, expires: Date.now() + CACHE_TTL_MS, fetchedAt, truncated };

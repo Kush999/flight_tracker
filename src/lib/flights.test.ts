@@ -69,6 +69,7 @@ describe("normalizeFlights and filters", () => {
   it("maps provider authentication, plan, and rate errors to safe messages", () => {
     expect(providerErrorFor(401).kind).toBe("auth");
     expect(providerErrorFor(403, "function_access_restricted").kind).toBe("restricted");
+    expect(providerErrorFor(403, "function_access_restricted").providerCode).toBe("function_access_restricted");
     expect(providerErrorFor(429).message).toMatch(/limit reached/);
   });
 });
